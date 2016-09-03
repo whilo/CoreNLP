@@ -37,6 +37,8 @@ public abstract class AbstractEvaluate  {
     IntCounter<Integer> lengthLabelsIncorrect;
     TopNGramRecord ngrams;
 
+    public static ConfusionMatrix<Integer> confusionMatrix;
+
     // TODO: make this an option
     static final int NUM_NGRAMS = 5;
     int[][] equivalenceClasses;
@@ -50,15 +52,20 @@ public abstract class AbstractEvaluate  {
 
     }
 
-    protected static void printConfusionMatrix(String name, int[][] confusion) {
-        log.info(name + " confusion matrix");
-        ConfusionMatrix<Integer> confusionMatrix = new ConfusionMatrix<>();
+    public static ConfusionMatrix<Integer> calculateConfusionMatrix(int[][] confusion) {
+        confusionMatrix = new ConfusionMatrix<>();
         confusionMatrix.setUseRealLabels(true);
         for (int i = 0; i < confusion.length; ++i) {
             for (int j = 0; j < confusion[i].length; ++j) {
                 confusionMatrix.add(j, i, confusion[i][j]);
             }
         }
+        return confusionMatrix;
+    }
+
+    protected static void printConfusionMatrix(String name, int[][] confusion) {
+        log.info(name + " confusion matrix");
+        ConfusionMatrix<Integer> confusionMatrix = calculateConfusionMatrix(confusion);
         log.info(confusionMatrix);
     }
 

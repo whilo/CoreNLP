@@ -68,6 +68,9 @@ public class RNNOptions implements Serializable {
    */
   public boolean combineClassification = true;
 
+    public double dropoutProb = 0.5;
+    public boolean useDropout = false;
+
   public RNNTrainOptions trainOptions = new RNNTrainOptions();
 
   public static final String[] DEFAULT_CLASS_NAMES = { "Very negative", "Negative", "Neutral", "Positive", "Very positive" };
@@ -112,6 +115,8 @@ public class RNNOptions implements Serializable {
     result.append("useTensors=" + useTensors + "\n");
     result.append("simplifiedModel=" + simplifiedModel + "\n");
     result.append("combineClassification=" + combineClassification + "\n");
+    result.append("useDropout=" + useDropout + "\n");
+    result.append("dropoutProb=" + dropoutProb + "\n");
     result.append("classNames=" + StringUtils.join(classNames, ",") + "\n");
     result.append("equivalenceClasses=");
     if (equivalenceClasses != null) {
@@ -179,6 +184,12 @@ public class RNNOptions implements Serializable {
     } else if (args[argIndex].equalsIgnoreCase("-useTensors")) {
       useTensors = true;
       return argIndex + 1;
+    } else if (args[argIndex].equalsIgnoreCase("-useDropout")) {
+        useDropout = true;
+        return argIndex + 1;
+    } else if (args[argIndex].equalsIgnoreCase("-dropoutProb")) {
+        dropoutProb = Double.parseDouble(args[argIndex + 1]);
+        return argIndex + 2;
     } else if (args[argIndex].equalsIgnoreCase("-nouseTensors")) {
       useTensors = false;
       return argIndex + 1;

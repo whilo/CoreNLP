@@ -1,8 +1,9 @@
 package edu.stanford.nlp.sentiment;
+import edu.stanford.nlp.util.logging.Redwood;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Random;
 
 import org.ejml.simple.SimpleMatrix;
 
@@ -362,8 +363,10 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
     if (tree.isLeaf()) {
       return;
     }
+    //System.out.println("DeltaUp:" + deltaUp);
 
     SimpleMatrix currentVector = RNNCoreAnnotations.getNodeVector(tree);
+    //System.out.println("Current Vector:" + currentVector);
     String category = tree.label().value();
     category = model.basicCategory(category);
 
@@ -404,7 +407,9 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
       SimpleMatrix currentVectorDerivative = NeuralUtils.elementwiseApplyTanhDerivative(currentVector);
       SimpleMatrix deltaFromClass = model.getUnaryClassification(category).transpose().mult(deltaClass);
       deltaFromClass = deltaFromClass.extractMatrix(0, model.op.numHid, 0, 1).elementMult(currentVectorDerivative);
+      //System.out.println("DeltaFromClass preterm: " + deltaFromClass);
       SimpleMatrix deltaFull = deltaFromClass.plus(deltaUp);
+      //System.out.println("DeltaFull preterm: " + deltaFull);
       SimpleMatrix oldWordVectorD = wordVectorD.get(word);
       if (oldWordVectorD == null) {
         wordVectorD.put(word, deltaFull);
@@ -424,7 +429,12 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
       SimpleMatrix currentVectorDerivative = NeuralUtils.elementwiseApplyTanhDerivative(currentVector);
       SimpleMatrix deltaFromClass = model.getBinaryClassification(leftCategory, rightCategory).transpose().mult(deltaClass);
       deltaFromClass = deltaFromClass.extractMatrix(0, model.op.numHid, 0, 1).elementMult(currentVectorDerivative);
+      //      System.out.println("DeltaFromClass: " + deltaFromClass);
       SimpleMatrix deltaFull = deltaFromClass.plus(deltaUp);
+      //System.out.println("DeltaFull: " + deltaFull);
+      if(model.op.useDropout) {
+          deltaFull = dropoutMask.elementMult(deltaFull);
+      }
 
       SimpleMatrix leftVector = RNNCoreAnnotations.getNodeVector(tree.children()[0]);
       SimpleMatrix rightVector = RNNCoreAnnotations.getNodeVector(tree.children()[1]);
@@ -434,16 +444,22 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
       SimpleMatrix deltaDown;
       if (model.op.useTensors) {
         SimpleTensor Wt_df = getTensorGradient(deltaFull, leftVector, rightVector);
-        binaryTensorTD.put(leftCategory, rightCategory, binaryTensorTD.get(leftCategory, rightCategory).plus(Wt_df));
-        deltaDown = computeTensorDeltaDown(deltaFull, leftVector, rightVector, model.getBinaryTransform(leftCategory, rightCategory), model.getBinaryTensor(leftCategory, rightCategory));
+        binaryTensorTD.put(leftCategory, rightCategory, binaryTensorTD.get(leftCategory,
+                                                                           rightCategory).plus(Wt_df));
+        deltaDown = computeTensorDeltaDown(deltaFull, leftVector, rightVector,
+                                           model.getBinaryTransform(leftCategory, rightCategory),
+                                           model.getBinaryTensor(leftCategory, rightCategory));
       } else {
         deltaDown = model.getBinaryTransform(leftCategory, rightCategory).transpose().mult(deltaFull);
       }
 
+
       SimpleMatrix leftDerivative = NeuralUtils.elementwiseApplyTanhDerivative(leftVector);
       SimpleMatrix rightDerivative = NeuralUtils.elementwiseApplyTanhDerivative(rightVector);
+
       SimpleMatrix leftDeltaDown = deltaDown.extractMatrix(0, deltaFull.numRows(), 0, 1);
       SimpleMatrix rightDeltaDown = deltaDown.extractMatrix(deltaFull.numRows(), deltaFull.numRows() * 2, 0, 1);
+
       backpropDerivativesAndError(tree.children()[0], binaryTD, binaryCD, binaryTensorTD, unaryCD, wordVectorD, leftDerivative.elementMult(leftDeltaDown));
       backpropDerivativesAndError(tree.children()[1], binaryTD, binaryCD, binaryTensorTD, unaryCD, wordVectorD, rightDerivative.elementMult(rightDeltaDown));
     }
@@ -474,6 +490,30 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
     return Wt_df;
   }
 
+    private SimpleMatrix dropoutMask = null;
+
+    public void forwardPropagateTree(Tree tree) {
+        // set up dropout mask
+        double dropoutProb = model.op.dropoutProb;
+        String word = tree.children()[0].label().value();
+        SimpleMatrix wordVector = model.getWordVector(word);
+
+        int numRows = wordVector.numRows();
+        int numCols = wordVector.numCols();
+        dropoutMask = new SimpleMatrix(numRows, numCols);
+        // TODO check without backprop error check
+        //        Random rand = new Random(1123); for gradient check
+        Random rand = new Random();
+        for(int i = 0; i<numRows; i++) {
+            double r = rand.nextDouble()>dropoutProb ? 1.0 : 0.0;
+            dropoutMask.set(i, 0, r);
+        }
+        //log.debug("dropout mask: " + dropoutMask);
+        //System.out.println("dropout mask: " + dropoutMask);
+
+        forwardPropagateTree(tree, 0);
+    }
+
   /**
    * This is the method to call for assigning labels and node vectors
    * to the Tree.  After calling this, each of the non-leaf nodes will
@@ -483,57 +523,64 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
    * PredictedClass.  In general, PredictedClass will be the most
    * useful annotation except when training.
    */
-  public void forwardPropagateTree(Tree tree) {
-    SimpleMatrix nodeVector = null;
-    SimpleMatrix classification = null;
+    private void forwardPropagateTree(Tree tree, int depth) {
+        SimpleMatrix nodeVector = null;
+        SimpleMatrix classification = null;
 
-    if (tree.isLeaf()) {
-      // We do nothing for the leaves.  The preterminals will
-      // calculate the classification for this word/tag.  In fact, the
-      // recursion should not have gotten here (unless there are
-      // degenerate trees of just one leaf)
-      throw new AssertionError("We should not have reached leaves in forwardPropagate");
-    } else if (tree.isPreTerminal()) {
-      classification = model.getUnaryClassification(tree.label().value());
-      String word = tree.children()[0].label().value();
-      SimpleMatrix wordVector = model.getWordVector(word);
-      nodeVector = NeuralUtils.elementwiseApplyTanh(wordVector);
-    } else if (tree.children().length == 1) {
-      throw new AssertionError("Non-preterminal nodes of size 1 should have already been collapsed");
-    } else if (tree.children().length == 2) {
-      forwardPropagateTree(tree.children()[0]);
-      forwardPropagateTree(tree.children()[1]);
+        if (tree.isLeaf()) {
+            // We do nothing for the leaves.  The preterminals will
+            // calculate the classification for this word/tag.  In fact, the
+            // recursion should not have gotten here (unless there are
+            // degenerate trees of just one leaf)
+            throw new AssertionError("We should not have reached leaves in forwardPropagate");
+        } else if (tree.isPreTerminal()) {
+            classification = model.getUnaryClassification(tree.label().value());
+            String word = tree.children()[0].label().value();
+            SimpleMatrix wordVector = model.getWordVector(word);
+            nodeVector = NeuralUtils.elementwiseApplyTanh(wordVector);
+        } else if (tree.children().length == 1) {
+            throw new AssertionError("Non-preterminal nodes of size 1 should have already been collapsed");
+        } else if (tree.children().length == 2) {
+            forwardPropagateTree(tree.children()[0], depth+1);
+            forwardPropagateTree(tree.children()[1], depth+1);
 
-      String leftCategory = tree.children()[0].label().value();
-      String rightCategory = tree.children()[1].label().value();
-      SimpleMatrix W = model.getBinaryTransform(leftCategory, rightCategory);
-      classification = model.getBinaryClassification(leftCategory, rightCategory);
+            String leftCategory = tree.children()[0].label().value();
+            String rightCategory = tree.children()[1].label().value();
+            SimpleMatrix W = model.getBinaryTransform(leftCategory, rightCategory);
+            classification = model.getBinaryClassification(leftCategory, rightCategory);
 
-      SimpleMatrix leftVector = RNNCoreAnnotations.getNodeVector(tree.children()[0]);
-      SimpleMatrix rightVector = RNNCoreAnnotations.getNodeVector(tree.children()[1]);
-      SimpleMatrix childrenVector = NeuralUtils.concatenateWithBias(leftVector, rightVector);
-      if (model.op.useTensors) {
-        SimpleTensor tensor = model.getBinaryTensor(leftCategory, rightCategory);
-        SimpleMatrix tensorIn = NeuralUtils.concatenate(leftVector, rightVector);
-        SimpleMatrix tensorOut = tensor.bilinearProducts(tensorIn);
-        nodeVector = NeuralUtils.elementwiseApplyTanh(W.mult(childrenVector).plus(tensorOut));
-      } else {
-        nodeVector = NeuralUtils.elementwiseApplyTanh(W.mult(childrenVector));
-      }
-    } else {
-      throw new AssertionError("Tree not correctly binarized");
-    }
+            SimpleMatrix leftVector = RNNCoreAnnotations.getNodeVector(tree.children()[0]);
+            SimpleMatrix rightVector = RNNCoreAnnotations.getNodeVector(tree.children()[1]);
+            SimpleMatrix childrenVector = NeuralUtils.concatenateWithBias(leftVector, rightVector);
+            if (model.op.useTensors) {
+                SimpleTensor tensor = model.getBinaryTensor(leftCategory, rightCategory);
+                SimpleMatrix tensorIn = NeuralUtils.concatenate(leftVector, rightVector);
+                SimpleMatrix tensorOut = tensor.bilinearProducts(tensorIn);
+                nodeVector = NeuralUtils.elementwiseApplyTanh(W.mult(childrenVector).plus(tensorOut)); // TODO apply dropout
+            } else {
+                nodeVector = NeuralUtils.elementwiseApplyTanh(W.mult(childrenVector));
+            }
 
-    SimpleMatrix predictions = NeuralUtils.softmax(classification.mult(NeuralUtils.concatenateWithBias(nodeVector)));
 
-    int index = getPredictedClass(predictions);
-    if (!(tree.label() instanceof CoreLabel)) {
-      throw new AssertionError("Expected CoreLabels in the nodes");
-    }
-    CoreLabel label = (CoreLabel) tree.label();
-    label.set(RNNCoreAnnotations.Predictions.class, predictions);
-    label.set(RNNCoreAnnotations.PredictedClass.class, index);
-    label.set(RNNCoreAnnotations.NodeVector.class, nodeVector);
-  } // end forwardPropagateTree
+        } else {
+            throw new AssertionError("Tree not correctly binarized");
+        }
+
+        if (model.op.useDropout) {
+            nodeVector = nodeVector.elementMult(dropoutMask);
+            //System.out.println("Activation: " + nodeVector + " Dropout Mask:" + dropoutMask);
+        }
+
+        SimpleMatrix predictions = NeuralUtils.softmax(classification.mult(NeuralUtils.concatenateWithBias(nodeVector)));
+
+        int index = getPredictedClass(predictions);
+        if (!(tree.label() instanceof CoreLabel)) {
+            throw new AssertionError("Expected CoreLabels in the nodes");
+        }
+        CoreLabel label = (CoreLabel) tree.label();
+        label.set(RNNCoreAnnotations.Predictions.class, predictions);
+        label.set(RNNCoreAnnotations.PredictedClass.class, index);
+        label.set(RNNCoreAnnotations.NodeVector.class, nodeVector);
+    } // end forwardPropagateTree
 
 }

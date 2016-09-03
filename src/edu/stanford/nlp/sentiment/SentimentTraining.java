@@ -7,6 +7,7 @@ import java.text.NumberFormat;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.LinkedList;
 
 import edu.stanford.nlp.trees.Tree;
 import edu.stanford.nlp.util.Generics;
@@ -21,7 +22,9 @@ public class SentimentTraining  {
   private static final NumberFormat NF = new DecimalFormat("0.00");
   private static final NumberFormat FILENAME = new DecimalFormat("0000");
 
-  private SentimentTraining() {} // static methods
+    public static List<Object> trainingHistory = new LinkedList<Object>();
+
+    //  private SentimentTraining() {} // static methods
 
   public static void executeOneTrainingBatch(SentimentModel model, List<Tree> trainingBatch, double[] sumGradSquare) {
     SentimentCostAndGradient gcFunc = new SentimentCostAndGradient(model, trainingBatch);
@@ -33,6 +36,7 @@ public class SentimentTraining  {
     double[] gradf = gcFunc.derivativeAt(theta);
     double currCost = gcFunc.valueAt(theta);
     log.info("batch cost: " + currCost);
+    trainingHistory.add(currCost);
     for (int feature = 0; feature<gradf.length; feature++ ) {
       sumGradSquare[feature] = sumGradSquare[feature] + gradf[feature]*gradf[feature];
       theta[feature] = theta[feature] - (model.op.trainOptions.learningRate * gradf[feature]/(Math.sqrt(sumGradSquare[feature])+eps));
@@ -42,6 +46,7 @@ public class SentimentTraining  {
   }
 
   public static void train(SentimentModel model, String modelPath, List<Tree> trainingTrees, List<Tree> devTrees) {
+      trainingHistory = new LinkedList<Object>();
     Timing timing = new Timing();
     long maxTrainTimeMillis = model.op.trainOptions.maxTrainTimeSeconds * 1000;
     int debugCycle = 0;
