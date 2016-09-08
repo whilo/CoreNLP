@@ -70,6 +70,8 @@ public class RNNOptions implements Serializable {
 
     public double dropoutProb = 0.5;
     public boolean useDropout = false;
+    public boolean useEmbeddingDropout = false;
+
 
   public RNNTrainOptions trainOptions = new RNNTrainOptions();
 
@@ -116,6 +118,7 @@ public class RNNOptions implements Serializable {
     result.append("simplifiedModel=" + simplifiedModel + "\n");
     result.append("combineClassification=" + combineClassification + "\n");
     result.append("useDropout=" + useDropout + "\n");
+    result.append("useEmbeddingDropout=" + useEmbeddingDropout + "\n");
     result.append("dropoutProb=" + dropoutProb + "\n");
     result.append("classNames=" + StringUtils.join(classNames, ",") + "\n");
     result.append("equivalenceClasses=");
@@ -186,6 +189,9 @@ public class RNNOptions implements Serializable {
       return argIndex + 1;
     } else if (args[argIndex].equalsIgnoreCase("-useDropout")) {
         useDropout = true;
+        return argIndex + 1;
+    } else if (args[argIndex].equalsIgnoreCase("-useEmbeddingDropout")) {
+        useEmbeddingDropout = true;
         return argIndex + 1;
     } else if (args[argIndex].equalsIgnoreCase("-dropoutProb")) {
         dropoutProb = Double.parseDouble(args[argIndex + 1]);

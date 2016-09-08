@@ -46,7 +46,6 @@ public class SentimentTraining  {
   }
 
   public static void train(SentimentModel model, String modelPath, List<Tree> trainingTrees, List<Tree> devTrees) {
-      trainingHistory = new LinkedList<Object>();
     Timing timing = new Timing();
     long maxTrainTimeMillis = model.op.trainOptions.maxTrainTimeSeconds * 1000;
     int debugCycle = 0;

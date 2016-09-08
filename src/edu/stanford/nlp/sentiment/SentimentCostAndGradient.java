@@ -4,6 +4,7 @@ import edu.stanford.nlp.util.logging.Redwood;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.LinkedList;
 
 import org.ejml.simple.SimpleMatrix;
 
@@ -353,6 +354,14 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
     backpropDerivativesAndError(tree, binaryTD, binaryCD, binaryTensorTD, unaryCD, wordVectorD, delta);
   }
 
+    public static LinkedList<Object> hashRand = new LinkedList<Object>();
+
+    public interface DropoutWord {
+        boolean isDropped(final String s, final double randOffset);
+    }
+
+    public static DropoutWord dropoutWord = null;
+
   private void backpropDerivativesAndError(Tree tree,
                                            TwoDimensionalMap<String, String, SimpleMatrix> binaryTD,
                                            TwoDimensionalMap<String, String, SimpleMatrix> binaryCD,
@@ -411,6 +420,11 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
       SimpleMatrix deltaFull = deltaFromClass.plus(deltaUp);
       //System.out.println("DeltaFull preterm: " + deltaFull);
       SimpleMatrix oldWordVectorD = wordVectorD.get(word);
+
+      if(model.op.useDropout && dropoutWord.isDropped(word, randOffset)) {
+          deltaFull = new SimpleMatrix(deltaFull.numRows(), deltaFull.numCols());
+      }
+
       if (oldWordVectorD == null) {
         wordVectorD.put(word, deltaFull);
       } else {
@@ -432,7 +446,7 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
       //      System.out.println("DeltaFromClass: " + deltaFromClass);
       SimpleMatrix deltaFull = deltaFromClass.plus(deltaUp);
       //System.out.println("DeltaFull: " + deltaFull);
-      if(model.op.useDropout) {
+      if(model.op.useEmbeddingDropout) {
           deltaFull = dropoutMask.elementMult(deltaFull);
       }
 
@@ -492,6 +506,8 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
 
     private SimpleMatrix dropoutMask = null;
 
+    private double randOffset = 0.0;
+
     public void forwardPropagateTree(Tree tree) {
         // set up dropout mask
         double dropoutProb = model.op.dropoutProb;
@@ -504,6 +520,7 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
         // TODO check without backprop error check
         //        Random rand = new Random(1123); for gradient check
         Random rand = new Random();
+        randOffset = rand.nextDouble();
         for(int i = 0; i<numRows; i++) {
             double r = rand.nextDouble()>dropoutProb ? 1.0 : 0.0;
             dropoutMask.set(i, 0, r);
@@ -538,6 +555,11 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
             String word = tree.children()[0].label().value();
             SimpleMatrix wordVector = model.getWordVector(word);
             nodeVector = NeuralUtils.elementwiseApplyTanh(wordVector);
+
+
+            if(model.op.useDropout && dropoutWord.isDropped(word, randOffset)) {
+                nodeVector = new SimpleMatrix(nodeVector.numRows(), nodeVector.numCols());
+            }
         } else if (tree.children().length == 1) {
             throw new AssertionError("Non-preterminal nodes of size 1 should have already been collapsed");
         } else if (tree.children().length == 2) {
@@ -566,10 +588,12 @@ public class SentimentCostAndGradient extends AbstractCachingDiffFunction {
             throw new AssertionError("Tree not correctly binarized");
         }
 
-        if (model.op.useDropout) {
+        if (model.op.useEmbeddingDropout) {
             nodeVector = nodeVector.elementMult(dropoutMask);
             //System.out.println("Activation: " + nodeVector + " Dropout Mask:" + dropoutMask);
         }
+
+
 
         SimpleMatrix predictions = NeuralUtils.softmax(classification.mult(NeuralUtils.concatenateWithBias(nodeVector)));
 
